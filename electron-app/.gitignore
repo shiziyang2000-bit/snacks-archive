@@ -1,0 +1,8 @@
+# Local packaging inputs and outputs. Source assets remain tracked.
+node_modules/
+backend/
+ffmpeg/
+dist/
+out/
+dist-cn/
+.build-cn/

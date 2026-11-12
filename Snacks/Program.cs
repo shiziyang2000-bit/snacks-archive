@@ -1,0 +1,325 @@
+using Microsoft.EntityFrameworkCore;
+using Serilog;
+using Snacks.Data;
+using Snacks.Services;
+using Snacks.Hubs;
+using Snacks.Models;
+using System.Runtime.InteropServices;
+using System.Text.Json;
+using Serilog.Events;
+
+// macOS / Linux: TesseractOCR ships only Windows DLLs and uses its own LibraryLoader
+// (not .NET DllImport), so a SetDllImportResolver wouldn't fire. Instead we point its
+// CustomSearchPath at AppContext.BaseDirectory and rely on the loader's
+// "x64/lib<name>.dll.{dylib,so}" convention. bundle-ocr-mac.sh lays out the dylibs
+// under <basedir>/x64/ on macOS; the Dockerfile symlinks the apt-installed .so's
+// into the same layout on Linux.
+if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ||
+    RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+{
+    TesseractOCR.InteropDotNet.LibraryLoader.Instance.CustomSearchPath = AppContext.BaseDirectory;
+}
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Operations log: rolling daily file under ${SNACKS_WORK_DIR}/logs/snacks-.log.
+//
+// <para>Every recurrence of "queue items vanished overnight" so far has been impossible
+// to diagnose because every interesting event was a `Console.WriteLine` that died with
+// the process. Wire Serilog as the host logger so any future occurrence has a persistent
+// record. The DiagnosticsController surfaces this file via a read-only tail endpoint.</para>
+//
+// <para>10MB cap per file, retain 7 daily rolls. Keeps roughly a week of activity at the
+// volume the cluster path generates without unbounded disk growth.</para>
+var snacksWorkDir = Environment.GetEnvironmentVariable("SNACKS_WORK_DIR")
+    ?? Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Snacks", "work");
+var snacksLogDir = Path.Combine(snacksWorkDir, "logs");
+try { Directory.CreateDirectory(snacksLogDir); } catch { /* logger fallback handles this */ }
+
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    // ASP.NET's built-in request-start event includes the raw query string. Dashboard
+    // compatibility supports URL credentials, so suppress that category to keep API
+    // and iframe tokens out of the rolling operation log.
+    .MinimumLevel.Override("Microsoft.AspNetCore.Hosting.Diagnostics", LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .WriteTo.Console()
+    .WriteTo.File(
+        path: Path.Combine(snacksLogDir, "snacks-.log"),
+        rollingInterval: RollingInterval.Day,
+        fileSizeLimitBytes: 10 * 1024 * 1024,
+        rollOnFileSizeLimit: true,
+        retainedFileCountLimit: 7,
+        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {SourceContext} {Message:lj}{NewLine}{Exception}")
+    .CreateLogger();
+builder.Host.UseSerilog();
+
+if ((Environment.GetEnvironmentVariable(LunaConnectionService.AllowInsecureHttpEnvironmentVariable) ?? "")
+    .Trim().ToLowerInvariant() is "1" or "true" or "yes" or "on")
+{
+    Log.Warning(
+        "{Variable} is enabled: Luna connector credentials may use plain HTTP. " +
+        "Use this only on an isolated local Docker network.",
+        LunaConnectionService.AllowInsecureHttpEnvironmentVariable);
+}
+
+// Determine listening address.
+// Docker: always 0.0.0.0:6767 (container isolation provides security).
+// Electron: localhost by default, 0.0.0.0 when cluster mode is enabled (checked via cluster.json).
+var listenUrl = Environment.GetEnvironmentVariable("ASPNETCORE_URLS");
+bool bindAllInterfaces = false;
+
+if (listenUrl == null)
+{
+    // Not set by Electron — Docker or standalone. Default to all interfaces.
+    listenUrl = "http://0.0.0.0:6767";
+    bindAllInterfaces = true;
+}
+else
+{
+    // If the URL already specifies a wildcard host, bind all interfaces.
+    var firstUrl = listenUrl.Split(';')[0];
+    if (firstUrl.Contains("://+") || firstUrl.Contains("://*") || firstUrl.Contains("://0.0.0.0"))
+    {
+        bindAllInterfaces = true;
+    }
+    else
+    {
+        // Electron sets ASPNETCORE_URLS to localhost. Check if cluster is enabled to decide binding.
+        var clusterConfigPath = Path.Combine(
+            Environment.GetEnvironmentVariable("SNACKS_WORK_DIR")
+            ?? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Snacks", "work"),
+            "config", "cluster.json");
+
+        if (File.Exists(clusterConfigPath))
+        {
+            try
+            {
+                var clusterJson = File.ReadAllText(clusterConfigPath);
+                using var clusterDoc = System.Text.Json.JsonDocument.Parse(clusterJson);
+                if (clusterDoc.RootElement.TryGetProperty("enabled", out var enabled)
+                    && enabled.GetBoolean()
+                    && clusterDoc.RootElement.TryGetProperty("role", out var role)
+                    && role.GetString() != "standalone")
+                {
+                    bindAllInterfaces = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Could not read cluster configuration while selecting the listen address");
+            }
+        }
+    }
+}
+
+// Parse the port from the resolved listen URL.
+var normalizedUrl = listenUrl.Split(';')[0].Replace("://+", "://0.0.0.0").Replace("://*", "://0.0.0.0");
+var listenPort = new Uri(normalizedUrl).Port;
+
+// The explicit Kestrel config below overrides HTTP_PORTS / DOTNET_URLS / appsettings
+// endpoints, so name the one variable that actually works while the reader is looking
+// at startup output trying to move the port.
+Log.Information(
+    $"Listening on {(bindAllInterfaces ? "0.0.0.0" : "localhost")}:{listenPort} — " +
+    "set ASPNETCORE_URLS (e.g. http://0.0.0.0:7070) to change the port; " +
+    "HTTP_PORTS and DOTNET_URLS are not honored");
+
+builder.WebHost.ConfigureKestrel(serverOptions =>
+{
+    // Explicit Kestrel config overrides ASPNETCORE_URLS — no duplicate listeners.
+    if (bindAllInterfaces)
+        serverOptions.ListenAnyIP(listenPort);
+    else
+        serverOptions.ListenLocalhost(listenPort);
+
+    // 100MB — chunks are 50MB, leaves headroom.
+    serverOptions.Limits.MaxRequestBodySize = 100 * 1024 * 1024;
+});
+
+// Configure form options for large file uploads.
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = 100 * 1024 * 1024; // 100MB
+    options.ValueLengthLimit = 256 * 1024;                // 256KB per value
+    options.ValueCountLimit = 1024;                       // Max 1024 form fields
+    options.KeyLengthLimit = 2048;                        // 2KB per key
+    options.MemoryBufferThreshold = 64 * 1024;            // 64KB before buffering to disk
+});
+
+builder.Services.AddControllersWithViews()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+        options.JsonSerializerOptions.WriteIndented = true;
+        options.JsonSerializerOptions.Converters.Add(new Snacks.Json.UtcDateTimeConverter());
+        options.JsonSerializerOptions.Converters.Add(new Snacks.Json.NullableUtcDateTimeConverter());
+    });
+
+// Machine-readable contract for the supported UI/public JSON API. Cluster RPC
+// routes are an internal protocol and intentionally excluded.
+builder.Services.AddOpenApi("v1", options =>
+{
+    options.ShouldInclude = description =>
+    {
+        var path = description.RelativePath ?? "";
+        return (path.StartsWith("api/", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(path, "metrics", StringComparison.OrdinalIgnoreCase))
+            && !path.StartsWith("api/cluster/", StringComparison.OrdinalIgnoreCase);
+    };
+});
+
+builder.Services.AddSignalR()
+    .AddJsonProtocol(options =>
+    {
+        options.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        options.PayloadSerializerOptions.Converters.Add(new Snacks.Json.UtcDateTimeConverter());
+        options.PayloadSerializerOptions.Converters.Add(new Snacks.Json.NullableUtcDateTimeConverter());
+    });
+
+// Database — SQLite with WAL mode for crash resilience.
+var workDir = Environment.GetEnvironmentVariable("SNACKS_WORK_DIR")
+    ?? Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Snacks", "work");
+var configDir = Path.Combine(workDir, "config");
+Directory.CreateDirectory(configDir);
+
+// Single-instance work-dir lock. Two backends sharing the same workDir race on
+// the SQLite WAL and on remote-jobs/<jobId>/ temp files. Hold an exclusive lock
+// for the process lifetime so the second backend exits before opening the DB.
+// Electron's app.requestSingleInstanceLock() handles the common case before we
+// spawn; this guards launches that bypass Electron.
+var lockPath = Path.Combine(workDir, ".snacks.lock");
+FileStream workDirLock;
+try
+{
+    workDirLock = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None);
+}
+catch (IOException ex)
+{
+    Console.Error.WriteLine($"Snacks: Another Snacks instance is already using {workDir}. Close it before starting a new one. ({ex.Message})");
+    Environment.Exit(2);
+    return;
+}
+AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { workDirLock.Dispose(); } catch { } };
+
+var dbPath = Path.Combine(configDir, "snacks.db");
+
+builder.Services.AddDbContextFactory<SnacksDbContext>(options =>
+    options.UseSqlite($"Data Source={dbPath}").AddInterceptors(new ArchiveDurabilityInterceptor()));
+builder.Services.AddSingleton<MediaFileRepository>();
+builder.Services.AddSingleton<EncodeHistoryRepository>();
+
+builder.Services.AddSingleton<FfprobeService>();
+builder.Services.AddSingleton<FileService>();
+builder.Services.AddSingleton<LogArchiveService>();
+builder.Services.AddSingleton<ConfigFileService>();
+builder.Services.AddSingleton<ArchiveMediaService>();
+builder.Services.AddSingleton<ArchiveService>();
+builder.Services.AddSingleton<FullPresetService>();
+builder.Services.AddHostedService<ArchiveShutdownService>();
+builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("LunaConnector")
+    // Connector credentials and bearer tokens must never follow a 307/308 to
+    // another host. Operators should configure Luna's final public URL.
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        AllowAutoRedirect = false,
+        AutomaticDecompression = System.Net.DecompressionMethods.All,
+    });
+builder.Services.AddSingleton<NotificationService>();
+builder.Services.AddSingleton<IntegrationService>();
+builder.Services.AddSingleton<LunaTaskExecutor>();
+builder.Services.AddSingleton<LunaConnectionService>();
+builder.Services.AddHostedService<LunaTaskWorker>();
+builder.Services.AddSingleton<Snacks.Services.Ocr.TessdataResolver>();
+builder.Services.AddSingleton<Snacks.Services.Ocr.NativeOcrService>();
+builder.Services.AddSingleton<SubtitleExtractionService>();
+builder.Services.AddSingleton<AuthService>();
+builder.Services.AddSingleton<TranscodingService>();
+builder.Services.AddSingleton<DashboardIntegrationService>();
+builder.Services.AddSingleton<FfmpegCapabilityService>();
+builder.Services.AddSingleton<LibraryAnalysisJobService>();
+builder.Services.AddSingleton<FileHealthService>();
+builder.Services.AddHostedService<RollingVerificationService>();
+builder.Services.AddSingleton<StateTransitionService>();
+// Per-kind dispatch routers. Adding a new MediaKind = a new IJobKindRouter
+// registration here; no other site needs touching.
+builder.Services.AddSingleton<Snacks.Services.Routing.IJobKindRouter, Snacks.Services.Routing.VideoJobRouter>();
+builder.Services.AddSingleton<Snacks.Services.Routing.IJobKindRouter, Snacks.Services.Routing.MusicJobRouter>();
+builder.Services.AddSingleton<Snacks.Services.Routing.JobKindRouters>();
+builder.Services.AddSingleton<ClusterService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ClusterService>());
+// SlotLedger is owned by ClusterService; expose the same instance via DI so
+// downstream services (transfer throttle, future watchdogs) resolve to the
+// dispatcher's authoritative store rather than constructing their own.
+builder.Services.AddSingleton<Snacks.Services.Slots.SlotLedger>(sp =>
+    sp.GetRequiredService<ClusterService>().SlotLedger);
+// Master-only networking config (transfer concurrency + bandwidth caps).
+// Slaves resolve the same singleton but never read it — only the master's
+// transfer code consults it.
+builder.Services.AddSingleton<NetworkingSettingsService>();
+builder.Services.AddSingleton<Snacks.Services.Cluster.TransferThrottle>();
+builder.Services.AddScoped<ClusterAuthFilter>();
+builder.Services.AddScoped<LocalNetworkOnlyFilter>();
+builder.Services.AddSingleton<AutoScanService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AutoScanService>());
+builder.Services.AddHostedService<LogRetentionService>();
+
+var app = builder.Build();
+
+// Initialize database — apply migrations and set pragmas.
+var mediaFileRepo = app.Services.GetRequiredService<MediaFileRepository>();
+await mediaFileRepo.InitializeAsync();
+await app.Services.GetRequiredService<ArchiveService>().InitializeAsync();
+app.Services.GetRequiredService<FullPresetService>().InitializeFreshProfile();
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/Home/Error");
+}
+
+// HTTPS redirection disabled in containers for flexibility.
+if (app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        ctx.Context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+        ctx.Context.Response.Headers["Pragma"] = "no-cache";
+        ctx.Context.Response.Headers["Expires"] = "0";
+    }
+});
+
+app.UseRouting();
+
+app.UseMiddleware<AuthMiddleware>();
+
+app.UseAuthorization();
+
+app.MapControllerRoute(
+    name: "default",
+    pattern: "{controller=Home}/{action=Index}/{id?}");
+
+app.MapControllers(); // Attribute-routed controllers (ClusterController)
+app.MapHub<TranscodingHub>("/transcodingHub");
+app.MapOpenApi("/openapi/{documentName}.json");
+
+try
+{
+    app.Run();
+}
+finally
+{
+    Log.CloseAndFlush();
+}

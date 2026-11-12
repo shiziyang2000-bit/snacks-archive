@@ -1,0 +1,216 @@
+<div class="row g-4">
+    <div class="col-md-6">
+        <div class="encoder-panel rounded">
+            <h6 class="fw-bold mb-3 d-flex align-items-center">
+                <i class="fas fa-network-wired me-2 text-primary"></i>
+                Distributed Encoding
+            </h6>
+
+            <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="clusterEnabled">
+                <label class="form-check-label" for="clusterEnabled">
+                    Enable Cluster Mode
+                </label>
+                <div class="form-text ms-4">Connect to other Snacks instances for distributed encoding</div>
+            </div>
+
+            <div class="mb-3">
+                <label for="clusterRole" class="form-label">
+                    <i class="fas fa-crown me-1"></i> Role
+                </label>
+                <select class="form-select" id="clusterRole">
+                    <option value="standalone">Standalone (Default)</option>
+                    <option value="master">Master (Has library, delegates to nodes)</option>
+                    <option value="node">Node (Accepts work from a master)</option>
+                </select>
+                <div class="form-text">
+                    <i class="fas fa-info-circle me-1"></i>
+                    <span id="roleDescription">Standard single-instance mode</span>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label for="clusterNodeName" class="form-label">
+                    <i class="fas fa-tag me-1"></i> Node Name
+                </label>
+                <input type="text" class="form-control" id="clusterNodeName" placeholder="My Computer">
+                <div class="form-text">Friendly name shown in the cluster dashboard</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="encoder-panel rounded">
+            <h6 class="fw-bold mb-3 d-flex align-items-center">
+                <i class="fas fa-shield-alt me-2 text-warning"></i>
+                Security
+            </h6>
+
+            <div class="mb-3">
+                <label for="clusterSecret" class="form-label">
+                    <i class="fas fa-key me-1"></i> Shared Secret
+                </label>
+                <div class="input-group">
+                    <input type="password" class="form-control" id="clusterSecret" placeholder="Enter a shared secret">
+                    <button class="btn btn-outline-secondary" type="button" id="toggleSecretVisibility">
+                        <i class="fas fa-eye"></i>
+                    </button>
+                    <button class="btn btn-outline-primary" type="button" id="generateSecret">
+                        <i class="fas fa-random me-1"></i>Generate
+                    </button>
+                </div>
+                <div class="form-text">All nodes in the cluster must use the same secret</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Master-specific settings -->
+<div class="row g-4 mt-1" id="masterSettings" style="display: none;">
+    <div class="col-md-6">
+        <div class="encoder-panel rounded">
+            <h6 class="fw-bold mb-3 d-flex align-items-center">
+                <i class="fas fa-broadcast-tower me-2 text-info"></i>
+                Discovery
+            </h6>
+
+            <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="clusterAutoDiscovery" checked>
+                <label class="form-check-label" for="clusterAutoDiscovery">
+                    Auto-discover nodes on local network
+                </label>
+                <div class="form-text ms-4">Uses UDP broadcast to find other Snacks instances</div>
+            </div>
+
+            <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="clusterLocalEncoding" checked>
+                <label class="form-check-label" for="clusterLocalEncoding">
+                    Local encoding enabled
+                </label>
+                <div class="form-text ms-4">Master encodes files locally in addition to delegating to nodes</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="encoder-panel rounded">
+            <h6 class="fw-bold mb-3 d-flex align-items-center">
+                <i class="fas fa-server me-2 text-success"></i>
+                Manual Nodes
+            </h6>
+
+            <div id="manualNodesList" class="mb-3" style="max-height: 200px; overflow-y: auto;">
+                <div class="text-muted text-center py-2"><small>No manual nodes configured</small></div>
+            </div>
+
+            <div class="d-flex gap-2">
+                <input type="text" class="form-control form-control-sm" id="manualNodeName" placeholder="Name">
+                <input type="text" class="form-control form-control-sm" id="manualNodeUrl" placeholder="http://192.168.1.50:6767">
+                <button class="btn btn-sm btn-outline-primary" id="addManualNode">
+                    <i class="fas fa-plus"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Node-specific settings -->
+<div class="row g-4 mt-1" id="nodeSettings" style="display: none;">
+    <div class="col-md-6">
+        <div class="encoder-panel rounded">
+            <h6 class="fw-bold mb-3 d-flex align-items-center">
+                <i class="fas fa-link me-2 text-info"></i>
+                Connection
+            </h6>
+
+            <div class="mb-3">
+                <label for="clusterMasterUrl" class="form-label">
+                    <i class="fas fa-crown me-1"></i> Master URL
+                </label>
+                <input type="text" class="form-control" id="clusterMasterUrl" placeholder="http://192.168.1.10:6767">
+                <div class="form-text">Leave blank to automatically discover the master on the local network. Only set this if auto-discovery doesn't work (e.g. different subnets).</div>
+            </div>
+
+            <div class="mb-3">
+                <label for="clusterNodeTempDir" class="form-label">
+                    <i class="fas fa-folder me-1"></i> Temporary Encode Directory
+                </label>
+                <div class="input-group">
+                    <input type="text" class="form-control" id="clusterNodeTempDir" placeholder="Leave blank for default">
+                    <button class="btn btn-outline-secondary folder-picker-btn" type="button" data-target="clusterNodeTempDir" title="Browse folders"><i class="fas fa-folder-open"></i></button>
+                </div>
+                <div class="form-text">Where files are stored during encoding. Use a fast drive for best performance.</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Shared Storage settings (visible for master + node since the flag is symmetric) -->
+<div class="row g-4 mt-1" id="sharedStorageSettings" style="display: none;">
+    <div class="col-12">
+        <div class="encoder-panel rounded">
+            <h6 class="fw-bold mb-3 d-flex align-items-center">
+                <i class="fas fa-hdd me-2 text-info"></i>
+                Shared Storage
+            </h6>
+
+            <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="clusterSharedStorageEnabled">
+                <label class="form-check-label" for="clusterSharedStorageEnabled">
+                    Enable shared storage mode
+                </label>
+                <div class="form-text ms-4">
+                    When master and node both mount the same NAS/SMB share, skip uploading the source and downloading the output. Both sides must enable this.
+                </div>
+            </div>
+
+            <div class="alert alert-warning py-2 mb-3" id="sharedStorageAllowlistWarning" style="display: none;">
+                <i class="fas fa-exclamation-triangle me-1"></i>
+                Shared storage is enabled but no allowed directories are set. Every dispatch will fall back to the regular upload/download flow until you add at least one path below.
+            </div>
+
+            <div class="row g-3" id="sharedStoragePaths">
+                <div class="col-md-6">
+                    <label for="clusterSharedInputPaths" class="form-label">
+                        <i class="fas fa-folder-open me-1"></i> Allowed input directories
+                    </label>
+                    <textarea class="form-control" id="clusterSharedInputPaths" rows="3" placeholder="/app/work/uploads"></textarea>
+                    <div class="form-text">One path per line. The master may only ask this node to read source files from inside one of these directories. Leave empty to disable shared input.</div>
+                </div>
+
+                <div class="col-md-6">
+                    <label for="clusterSharedOutputPaths" class="form-label">
+                        <i class="fas fa-folder me-1"></i> Allowed output directories
+                    </label>
+                    <textarea class="form-control" id="clusterSharedOutputPaths" rows="3" placeholder="/app/work/uploads"></textarea>
+                    <div class="form-text">One path per line. The master may only ask this node to write encoded output into one of these directories. Leave empty to fall back to downloading the encoded output.</div>
+                </div>
+
+                <div class="col-md-12">
+                    <details>
+                        <summary class="form-label fw-semibold">Path rewrites (advanced)</summary>
+                        <div class="mt-2">
+                            <textarea class="form-control" id="clusterSharedRewrites" rows="3" placeholder="/shared/movies => /mnt/nas/movies&#10;/shared/tv => /mnt/nas2/tv"></textarea>
+                            <div class="form-text mt-1">
+                                One <code>master-prefix =&gt; node-prefix</code> pair per line. If the master sees a share
+                                at a different path than this node, translate it before validating — nodes mounting
+                                several shares need one line per share. Set the per-node scratch location with the
+                                existing <em>Temporary Encode Directory</em> field above.
+                            </div>
+                        </div>
+                    </details>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mt-3">
+    <div class="col-12 d-flex align-items-center gap-2 flex-wrap">
+        <button class="btn btn-primary" id="saveClusterConfig">
+            <i class="fas fa-save me-1"></i> Save Cluster Settings
+        </button>
+        <span class="text-success ms-2" id="clusterSaveStatus" style="display: none;">
+            <i class="fas fa-check me-1"></i>Saved
+        </span>
+    </div>
+</div>

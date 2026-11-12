@@ -1,0 +1,174 @@
+<div id="archiveUiRoot" data-role-visible="master standalone">
+    <div class="alert alert-warning py-2 small" id="archiveUiUnavailable" style="display:none;"></div>
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div>
+            <div class="settings-section-title mb-1"><i class="fas fa-box-archive me-2"></i>Archive and history</div>
+            <div class="small text-muted">Saved settings govern new files. A paused task can adopt current output choices for its pending files; completed files and existing transactions stay unchanged.</div>
+        </div>
+        <div class="btn-group btn-group-sm" role="group" aria-label="Archive pages">
+            <button type="button" class="btn btn-primary" id="archiveShowSettings"><i class="fas fa-sliders me-1"></i>Archive settings</button>
+            <button type="button" class="btn btn-outline-secondary" id="archiveShowHistory"><i class="fas fa-clock-rotate-left me-1"></i>Task history</button>
+        </div>
+    </div>
+
+    <section id="archiveSettingsPanel">
+        <div class="encoder-panel rounded mb-3">
+            <h6 class="fw-bold mb-3"><i class="fas fa-shield-halved me-2 text-primary"></i>Archive behavior</h6>
+            <div class="alert alert-info py-2 small">Files smaller than 10 MB (10,000,000 bytes) are left unchanged and skipped, including pending files in existing archive tasks. Existing original-file transactions stay protected.</div>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label" for="archiveMode">Processing mode</label>
+                    <select class="form-select" id="archiveMode">
+                        <option value="custom">Custom archive rules</option>
+                        <option value="original">Original Snacks behavior</option>
+                    </select>
+                    <div class="form-text">Custom mode preserves source format and video specifications. Select a folder to start directly.</div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label" for="archiveTargetMbps">Target video bitrate cap (Mbps)</label>
+                    <input class="form-control" id="archiveTargetMbps" type="number" min="0.1" step="0.1" inputmode="decimal" value="20">
+                    <div class="form-text">The 20 Mbps cap follows the configured archive rules.</div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label" for="archiveOutputMode">Replace original files</label>
+                    <select class="form-select" id="archiveOutputMode">
+                        <option value="inPlace">Replace originals with completed output</option>
+                        <option value="saveAs">Keep originals and save output to another folder</option>
+                    </select>
+                </div>
+                <div class="col-md-6" id="archiveOutputDirectoryGroup">
+                    <label class="form-label" for="archiveOutputDirectory">Output folder</label>
+                    <div class="input-group">
+                        <input class="form-control" id="archiveOutputDirectory" type="text" data-user-content autocomplete="off" placeholder="Choose a folder">
+                        <button type="button" class="btn btn-outline-secondary folder-picker-btn" data-target="archiveOutputDirectory"><i class="fas fa-folder-open me-1"></i>Browse</button>
+                    </div>
+                    <div class="form-text">Required when saving to another folder. The original remains in place.</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="encoder-panel rounded mb-3">
+            <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="archiveBackupEnabled" checked>
+                <label class="form-check-label fw-semibold" for="archiveBackupEnabled">Keep an extra original backup</label>
+                <div class="form-text">Extra backups continue to use the full original file size. Turn this off to keep only the compressed result after replacement; existing backups are never deleted automatically.</div>
+            </div>
+            <div class="row g-3" id="archiveBackupOptions">
+                <div class="col-md-6">
+                    <label class="form-label" for="archiveBackupLocation">Backup location</label>
+                    <select class="form-select" id="archiveBackupLocation">
+                        <option value="selectedDirectory">Selected folder</option>
+                        <option value="sameVolume" selected>Same volume as the source</option>
+                    </select>
+                </div>
+                <div class="col-md-6" id="archiveBackupDirectoryGroup">
+                    <label class="form-label" for="archiveBackupDirectory">Backup folder</label>
+                    <div class="input-group">
+                        <input class="form-control" id="archiveBackupDirectory" type="text" autocomplete="off" placeholder="Choose a backup folder">
+                        <button type="button" class="btn btn-outline-secondary folder-picker-btn" data-target="archiveBackupDirectory"><i class="fas fa-folder-open me-1"></i>Browse</button>
+                    </div>
+                    <div class="form-text">Choose the folder before starting archive tasks. Existing files are never overwritten on conflict.</div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label" for="archiveBackupReminderDays">Remind me after (days)</label>
+                    <input class="form-control" id="archiveBackupReminderDays" type="number" min="1" step="1" value="3">
+                    <div class="form-text">This is a reminder only; backups are not deleted automatically.</div>
+                </div>
+            </div>
+            <div class="alert alert-warning py-2 small mt-3 mb-0" id="archiveBackupPathRequired" style="display:none;">Choose a backup folder before previewing an archive task.</div>
+        </div>
+
+        <div class="encoder-panel rounded mb-3">
+            <h6 class="fw-bold mb-3"><i class="fas fa-database me-2 text-primary"></i>Historical cache management</h6>
+            <div class="row g-3 align-items-end">
+                <div class="col-md-7">
+                    <label class="form-label" for="archiveCacheDirectory">Cache folder override</label>
+                    <div class="input-group">
+                        <input class="form-control" id="archiveCacheDirectory" type="text" autocomplete="off" placeholder="Use the application cache folder">
+                        <button type="button" class="btn btn-outline-secondary folder-picker-btn" data-target="archiveCacheDirectory"><i class="fas fa-folder-open me-1"></i>Browse</button>
+                        <button type="button" class="btn btn-outline-secondary" id="archiveCacheUseDefault">Default</button>
+                    </div>
+                    <div class="form-text">Blank uses the application cache folder shown below.</div>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label" for="archiveCacheLimitGb">Historical cache limit (GB)</label>
+                    <input class="form-control" id="archiveCacheLimitGb" type="number" min="1" step="1" value="5">
+                </div>
+                <div class="col-md-3">
+                    <button type="button" class="btn btn-outline-danger w-100" id="archiveCacheClear"><i class="fas fa-trash-can me-1"></i>Clear unused cache</button>
+                </div>
+            </div>
+            <div class="small mt-3" id="archiveCacheUsage">Cache usage is not loaded yet.</div>
+            <div class="small text-muted text-break mt-1" id="archiveCacheEffectiveDirectory" data-user-content></div>
+            <div class="form-text">Content checks and scoring are disabled. Historical scores and existing cache remain available; cache cleanup never removes originals or backups.</div>
+        </div>
+
+        <div class="encoder-panel rounded mb-3">
+            <h6 class="fw-bold mb-3"><i class="fas fa-gauge-high me-2 text-primary"></i>Global transcode limit</h6>
+            <div class="row g-3 align-items-center">
+                <div class="col-md-9">
+                    <label class="form-label" for="archiveConcurrency">Concurrent transcodes</label>
+                    <input class="form-range" id="archiveConcurrency" type="range" min="1" max="20" step="1" value="10">
+                </div>
+                <div class="col-md-3">
+                    <div class="input-group">
+                        <input class="form-control" id="archiveConcurrencyNumber" type="number" min="1" max="20" step="1" value="10">
+                        <span class="input-group-text">/ 20</span>
+                    </div>
+                </div>
+            </div>
+            <div class="form-text">One shared limit across all folders and local transcodes.</div>
+        </div>
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            <button type="button" class="btn btn-primary" id="archiveSettingsSave"><i class="fas fa-floppy-disk me-1"></i>Save archive settings</button>
+            <span class="small" id="archiveSettingsStatus" aria-live="polite"></span>
+        </div>
+    </section>
+
+    <section id="archiveHistoryPanel" style="display:none;">
+        <div class="encoder-panel rounded mb-3">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                <div>
+                    <h6 class="fw-bold mb-1"><i class="fas fa-clock-rotate-left me-2 text-primary"></i>Outputs and original backups</h6>
+                    <div class="small text-muted">Completed, failed, restored, skipped, storage-paused and interrupted files stay recorded after cache cleanup.</div>
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                    <select class="form-select form-select-sm" id="archiveHistoryStatus" style="width:auto;">
+                        <option value="">All statuses</option>
+                        <option value="completed">Completed</option>
+                        <option value="failed">Failed</option>
+                        <option value="restored">Restored original</option>
+                        <option value="skipped">Skipped</option>
+                        <option value="paused_storage">Paused by storage issue</option>
+                        <option value="interrupted">Interrupted</option>
+                        <option value="queued">Queued</option>
+                        <option value="running">Running</option>
+                    </select>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="archiveHistoryRefresh"><i class="fas fa-rotate me-1"></i>Refresh</button>
+                </div>
+            </div>
+            <div class="d-flex gap-2 flex-wrap mb-3" id="archiveHistoryActions">
+                <button type="button" class="btn btn-sm btn-outline-danger" id="archiveRetrySelected" disabled>Retry selected failures</button>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="archiveRearchiveSelected" disabled>Rearchive selected</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="archiveRescoreSelected" disabled hidden>Score selected samples</button>
+                <button type="button" class="btn btn-sm btn-outline-warning" id="archiveRestoreSelected" disabled>Preview restore</button>
+            </div>
+            <div class="table-responsive dash-table-wrap border rounded">
+                <table class="dash-table">
+                    <thead><tr>
+                        <th><input type="checkbox" id="archiveHistorySelectPage" aria-label="Select page"></th>
+                        <th>Status</th><th>File</th><th>Progress</th><th>Rate</th><th>Size</th><th>Historical sample score</th><th>Reason</th><th>Actions</th>
+                    </tr></thead>
+                    <tbody id="archiveHistoryRows"><tr><td colspan="9" class="text-muted text-center py-4">History has not been loaded.</td></tr></tbody>
+                </table>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mt-3">
+                <span class="small text-muted" id="archiveHistoryPageLabel"></span>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary" id="archiveHistoryPrevious" disabled>Previous</button>
+                    <button class="btn btn-outline-secondary" id="archiveHistoryNext" disabled>Next</button>
+                </div>
+            </div>
+        </div>
+    </section>
+</div>

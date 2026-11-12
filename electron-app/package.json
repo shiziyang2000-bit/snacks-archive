@@ -1,0 +1,116 @@
+{
+  "name": "snacks-archive",
+  "version": "2.20.4",
+  "description": "Snacks 归档版 — 基于固定 v2.20.1 的汉化与安全归档版本",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac --arm64",
+    "test": "node --test tests/*.test.cjs",
+    "check": "npm run check:syntax && npm run check:version && npm test",
+    "check:syntax": "node --check main.js && node --check scripts/notarize.js",
+    "check:version": "node ../scripts/sync-version.mjs --check",
+    "sync:version": "node ../scripts/sync-version.mjs",
+    "build:mac:cn": "bash ../build-cn-mac.sh",
+    "build:mac:archive": "bash ../build-cn-mac.sh"
+  },
+  "dependencies": {
+    "tree-kill": "^1.2.2"
+  },
+  "devDependencies": {
+    "@electron/notarize": "^3.1.1",
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3"
+  },
+  "author": "Derek Morris",
+  "build": {
+    "appId": "local.wuxian.snacks.archive",
+    "productName": "Snacks 归档版",
+    "publish": null,
+    "win": {
+      "target": "nsis",
+      "icon": "icons/snacks.ico"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": "arm64"
+        }
+      ],
+      "icon": "icons/snacks.icns",
+      "category": "public.app-category.video",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist",
+      "extendInfo": {
+        "LSMinimumSystemVersion": "26.0",
+        "CFBundleDevelopmentRegion": "zh_CN",
+        "CFBundleLocalizations": [
+          "zh_CN",
+          "en"
+        ]
+      }
+    },
+    "dmg": {
+      "title": "Snacks 归档版 · v${version}",
+      "icon": "icons/snacks.icns"
+    },
+    "afterSign": "scripts/notarize.js",
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Snacks 归档版",
+      "installerIcon": "icons/snacks.ico",
+      "uninstallerIcon": "icons/snacks.ico",
+      "installerHeaderIcon": "icons/snacks.ico",
+      "include": "installer.nsh"
+    },
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "ffmpeg",
+        "to": "ffmpeg",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "gpac",
+        "to": "gpac",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "licenses",
+        "to": "Licenses",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "files": [
+      "main.js",
+      "icons/**/*",
+      "scripts/**/*",
+      "preload.js",
+      "file-actions.cjs"
+    ],
+    "executableName": "Snacks-Archive",
+    "artifactName": "Snacks-Archive-v${version}-${arch}.${ext}",
+    "buildVersion": "20261111"
+  }
+}

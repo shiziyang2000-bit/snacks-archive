@@ -1,0 +1,74 @@
+<div class="row g-4">
+    <div class="col-md-6">
+        <div class="encoder-panel rounded">
+            <h6 class="fw-bold mb-3"><i class="fas fa-screwdriver-wrench me-2 text-primary"></i>Advanced</h6>
+
+            <div class="mb-3">
+                <label for="advHeartbeatInterval" class="form-label">Heartbeat Interval (seconds)</label>
+                <input type="number" class="form-control" id="advHeartbeatInterval" min="5" max="300" step="1">
+                <div class="form-text">How often cluster nodes ping the master.</div>
+            </div>
+
+            <div class="mb-3">
+                <label for="advNodeTimeout" class="form-label">Node Timeout (seconds)</label>
+                <input type="number" class="form-control" id="advNodeTimeout" min="10" max="600" step="1">
+                <div class="form-text">How long before a silent node is marked offline.</div>
+            </div>
+
+            <button class="btn btn-primary btn-sm" id="saveAdvancedCluster"><i class="fas fa-save me-1"></i>Save Timings</button>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="encoder-panel rounded">
+            <h6 class="fw-bold mb-3"><i class="fas fa-tools me-2 text-warning"></i>Maintenance</h6>
+
+            <div class="alert alert-info py-2 small" id="archiveLegacyMaintenanceNotice" style="display:none;">
+                Custom archive tasks use Archive task history for retry and continuation. Legacy queue maintenance is available in Original Snacks behavior.
+            </div>
+
+            <div class="d-flex flex-column gap-2">
+                <button class="btn btn-outline-primary" id="reevaluateQueueBtn">
+                    <i class="fas fa-arrows-rotate me-1"></i> Re-evaluate Queue Against Current Settings
+                </button>
+                <div class="form-text mt-n1 mb-2 ms-1">Re-checks every library file against the current encoder settings: skipped → unseen for files that newly need encoding, unseen → skipped for files that no longer do, and drops queued items that no longer need encoding. Safe to run any time. The button blocks itself while the walk is in progress.</div>
+                <div class="form-check ms-1 mt-n2 mb-2">
+                    <input class="form-check-input" type="checkbox" id="forceRetryNoSavingsCheck">
+                    <label class="form-check-label small" for="forceRetryNoSavingsCheck">
+                        Also retry encodes that previously produced no savings
+                    </label>
+                    <div class="form-text mt-n1 ms-1">Off by default. Re-running an encode that already proved &ldquo;no savings&rdquo; under the same settings just burns CPU. Tick this when you've changed encoder settings (target bitrate, codec, etc.) and want those files reconsidered.</div>
+                </div>
+                <button class="btn btn-outline-warning" id="clearScanHistory"><i class="fas fa-eraser me-1"></i> Clear Auto-Scan History</button>
+                <button class="btn btn-outline-warning" id="clearDashboardHistory"><i class="fas fa-chart-line me-1"></i> Clear native encode history</button>
+                <button class="btn btn-outline-warning" id="removeFailedFiles"><i class="fas fa-trash-can me-1"></i> Remove Failed Items</button>
+                <button class="btn btn-outline-danger" id="restartAppBtn"><i class="fas fa-redo me-1"></i> Restart Application</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="encoder-panel rounded">
+            <h6 class="fw-bold mb-3"><i class="fas fa-file-lines me-2 text-secondary"></i>Logs</h6>
+
+            <div class="mb-3">
+                <label for="settingsEncodingLogRetentionDays" class="form-label">Per-job log retention (days)</label>
+                <input type="number" class="form-control" id="settingsEncodingLogRetentionDays" min="0" step="1">
+                <div class="form-text">How long to keep per-job FFmpeg logs in the working directory. Each encode writes one file; over time they accumulate. Set to <code>0</code> to keep them forever. The app's rolling log is unaffected.</div>
+            </div>
+
+            <h6 class="fw-bold mb-3 mt-4"><i class="fas fa-heart-pulse me-2 text-info"></i>Rolling Verification</h6>
+
+            <div class="mb-3">
+                <label for="settingsVerifyFilesPerDay" class="form-label">Files deep-verified per day</label>
+                <input type="number" class="form-control" id="settingsVerifyFilesPerDay" min="0" max="10000" step="10" value="0">
+                <div class="form-text">
+                    Continuously re-checks your library for silent corruption by decoding short
+                    samples of each file (oldest-checked first), spread evenly through the day.
+                    Problems appear on the Library Health page. <code>0</code> disables it;
+                    <code>100</code>–<code>500</code> is a gentle setting for NAS hardware.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

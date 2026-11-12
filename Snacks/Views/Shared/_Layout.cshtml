@@ -1,0 +1,89 @@
+@inject Snacks.Services.ClusterService ClusterService
+<!DOCTYPE html>
+<html lang="zh-CN" data-bs-theme="dark" class="snacks-i18n-pending">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Snacks - Automated Media Library Transcoder</title>
+    <link rel="icon" type="image/x-icon" href="~/favicon.ico">
+    <link href="~/lib/bootstrap.min.css" rel="stylesheet">
+    <link href="~/lib/fontawesome.min.css" rel="stylesheet">
+    <link href="~/css/site.css" rel="stylesheet" />
+</head>
+<body class="d-flex flex-column">
+    <nav class="navbar navbar-expand-sm navbar-dark border-bottom fixed-top">
+        <div class="container">
+            <a href="https://snacksvideo.com" target="_blank" class="navbar-brand d-flex align-items-center text-decoration-none">
+                <img src="~/images/snacks.ico" alt="Snacks" style="height: 24px; width: 24px;" class="me-2">
+                <span class="fw-bold">Snacks</span>
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target=".navbar-collapse">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="navbar-collapse collapse">
+                <ul class="navbar-nav ms-auto align-items-sm-center">
+                    <li class="nav-item d-flex align-items-center py-2 py-sm-0">
+                        <a class="btn btn-outline-secondary btn-sm me-2" href="/" data-spa-link title="Queue"><i class="fas fa-list-ul"></i><span class="d-none d-md-inline ms-1">Queue</span></a>
+                        <a class="btn btn-outline-secondary btn-sm me-2" href="/dashboard" data-spa-link title="Dashboard"><i class="fas fa-chart-line"></i><span class="d-none d-md-inline ms-1">Dashboard</span></a>
+                        @* Library Health tracks the master's catalog; a worker only has its own
+                           (near-empty) DB, so the page would be misleading there. Hide it on workers. *@
+                        @if (!ClusterService.IsNodeMode)
+                        {
+                            <a class="btn btn-outline-secondary btn-sm me-2" href="/library-health" data-spa-link title="Library Health"><i class="fas fa-heart-pulse"></i><span class="d-none d-md-inline ms-1">Health</span></a>
+                        }
+                        <a class="btn btn-outline-secondary btn-sm me-2" href="/cluster-logs" data-spa-link title="Cluster Logs"><i class="fas fa-file-lines"></i><span class="d-none d-md-inline ms-1">Logs</span></a>
+                        <button class="btn btn-outline-secondary btn-sm me-2" id="pauseResumeBtn" title="Pause/Resume Queue"><i class="fas fa-pause" id="pauseResumeIcon"></i></button>
+                        <button class="btn btn-outline-secondary btn-sm me-2" id="openSettingsBtn"><i class="fas fa-cog"></i></button>
+                        <button class="btn btn-primary btn-sm me-2" id="archiveStartFolder"><i class="fas fa-folder-open me-1"></i>Choose folder and start</button>
+                        <button class="btn btn-outline-secondary btn-sm" id="openLibraryBtn"><i class="fas fa-folder-plus me-1"></i><span class="d-none d-sm-inline">Browse Library</span><span class="d-sm-none">Library</span></button>
+                    </li>
+                    <li class="nav-item d-flex align-items-center py-1 py-sm-0 ms-sm-2">
+                        <label class="visually-hidden" for="snacksLanguageSelect">Language</label>
+                        <select class="form-select form-select-sm snacks-language-select" id="snacksLanguageSelect" aria-label="Language">
+                            <option value="zh-CN">简体中文</option>
+                            <option value="en">English</option>
+                        </select>
+                    </li>
+                    <li class="nav-item d-flex align-items-center py-1 py-sm-0 ms-sm-3">
+                        <span class="nav-link d-flex align-items-center py-0" id="connectionStatus">
+                            <i class="fas fa-circle text-warning me-1" id="connectionDot" style="font-size: 0.5rem;"></i>
+                            <small id="connectionText"></small>
+                        </span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container main-content">
+        <div id="archiveFolderStatus" class="mb-3" role="status" style="display:none"></div>
+        @*
+            Page-specific content. The SPA shell in main.js swaps this element's
+            innerHTML on navigation, leaving the navbar, modals, and SignalR
+            connection alive across pages.
+        *@
+        <div id="page-content" data-page="@(ViewData["Page"] as string ?? "")">
+            @RenderBody()
+        </div>
+    </main>
+
+    <footer class="footer mt-auto py-3 border-top">
+        <div class="container text-center">
+            <span class="text-muted">
+                <img src="~/images/snacks.ico" alt="Snacks" style="height: 18px; width: 18px;" class="me-2">
+                <a href="https://snacksvideo.com" target="_blank" class="text-muted text-decoration-none"><strong>Snacks</strong></a> - &copy; @DateTime.Now.Year
+                <a href="https://derekshreds.dev" target="_blank" class="text-muted text-decoration-none">Derek Morris</a> -
+                <a href="/docs/index.html" class="text-muted text-decoration-none">View Documentation</a>
+            </span>
+        </div>
+    </footer>
+
+    @await Html.PartialAsync("_AppModals")
+
+    <script src="~/js/i18n.js"></script>
+    <script src="~/lib/bootstrap.bundle.min.js"></script>
+    <script src="~/lib/signalr.min.js"></script>
+    <script src="~/js/site.js"></script>
+    <script type="module" src="~/js/main.js"></script>
+</body>
+</html>

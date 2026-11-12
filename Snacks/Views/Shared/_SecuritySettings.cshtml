@@ -1,0 +1,98 @@
+<div class="row g-4">
+    <div class="col-md-6">
+        <div class="encoder-panel rounded">
+            <h6 class="fw-bold mb-3"><i class="fas fa-user-lock me-2 text-primary"></i>Control Panel Login</h6>
+
+            <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="authEnabled">
+                <label class="form-check-label" for="authEnabled">Require sign-in to access control panel</label>
+                <div class="form-text ms-4" id="authEnabledHint"></div>
+            </div>
+
+            <div class="mb-3">
+                <label for="authUsername" class="form-label">Username</label>
+                <input type="text" class="form-control" id="authUsername" autocomplete="off">
+            </div>
+
+            <div class="mb-3">
+                <label for="authPassword" class="form-label">Password</label>
+                <input type="password" class="form-control" id="authPassword" placeholder="Leave blank to keep current" autocomplete="new-password">
+                <div class="form-text">Stored as a PBKDF2 hash; never displayed back.</div>
+            </div>
+
+            <div class="d-flex gap-2 align-items-center">
+                <button class="btn btn-primary" id="saveAuthConfig"><i class="fas fa-save me-1"></i>Save</button>
+                <button class="btn btn-outline-secondary" id="signOutBtn" type="button"><i class="fas fa-sign-out-alt me-1"></i>Sign out</button>
+                <span class="small text-success ms-2" id="authSaveStatus" style="display:none;"><i class="fas fa-check me-1"></i>Saved</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="encoder-panel rounded mb-4">
+            <h6 class="fw-bold mb-3"><i class="fas fa-key me-2 text-primary"></i>API Access</h6>
+            <p class="small text-muted">
+                Lets scripts, orchestrators, and external dashboards (Homarr, Glance, …) call the API when
+                sign-in is enabled — e.g. pause/resume the queue, trigger a scan, or read status via the
+                read-only <code>/api/v1/*</code> endpoints. Send the key as an <code>X-Api-Key</code> header,
+                or an <code>Authorization: Bearer</code> token. The Sonarr-style <code>?apiKey=</code>
+                query form is accepted only by the read-only <code>/api/v1</code> and Tdarr-compatible routes.
+                See the <a href="/docs/#homarr-tdarr" target="_blank" rel="noopener">native Homarr widget setup guide</a>.
+            </p>
+
+            <div class="input-group mb-2">
+                <input type="password" class="form-control" id="apiKeyValue" readonly placeholder="No API key generated" autocomplete="off">
+                <button class="btn btn-outline-secondary" id="revealApiKeyBtn" type="button" title="Show / hide"><i class="fas fa-eye"></i></button>
+                <button class="btn btn-outline-secondary" id="copyApiKeyBtn" type="button" title="Copy to clipboard"><i class="fas fa-copy"></i></button>
+            </div>
+
+            <div class="d-flex gap-2 mb-2">
+                <button class="btn btn-primary btn-sm" id="generateApiKeyBtn"><i class="fas fa-sync me-1"></i>Generate new key</button>
+                <button class="btn btn-outline-danger btn-sm" id="deleteApiKeyBtn"><i class="fas fa-trash me-1"></i>Remove</button>
+            </div>
+
+            <div class="form-text" id="envApiKeyHint" style="display:none;">
+                <i class="fas fa-lock me-1"></i>An additional API key is configured via the <code>SNACKS_API_KEY</code> environment variable.
+            </div>
+            <div class="form-text">
+                Example: <code>curl -H "X-Api-Key: KEY" -X POST http://host:6767/api/queue/paused -H "Content-Type: application/json" -d '{"paused":true}'</code>
+            </div>
+        </div>
+
+        <div class="encoder-panel rounded mb-4">
+            <h6 class="fw-bold mb-3"><i class="fas fa-window-restore me-2 text-primary"></i>Iframe Access</h6>
+            <p class="small text-muted">
+                Generate a credential scoped to the read-only <code>/iframe/*</code> pages. Use this URL in
+                Homarr's iframe widget; it cannot call the Snacks API or change settings. See the
+                <a href="/docs/#homarr-iframe" target="_blank" rel="noopener">compact tile setup guide</a>.
+            </p>
+
+            <div class="input-group mb-3">
+                <input type="password" class="form-control" id="embedUrlValue" readonly placeholder="No iframe URL generated" autocomplete="off">
+                <button class="btn btn-outline-secondary" id="revealEmbedUrlBtn" type="button" title="Show / hide"><i class="fas fa-eye"></i></button>
+                <button class="btn btn-outline-secondary" id="copyEmbedUrlBtn" type="button" title="Copy to clipboard"><i class="fas fa-copy"></i></button>
+            </div>
+
+            <div class="d-flex gap-2 mb-3">
+                <button class="btn btn-primary btn-sm" id="generateEmbedTokenBtn" type="button"><i class="fas fa-sync me-1"></i>Generate URL</button>
+                <button class="btn btn-outline-danger btn-sm" id="deleteEmbedTokenBtn" type="button"><i class="fas fa-trash me-1"></i>Revoke</button>
+            </div>
+
+            <label for="iframeAllowedOrigins" class="form-label small">Allowed Homarr origins</label>
+            <textarea class="form-control mb-2" id="iframeAllowedOrigins" rows="2" placeholder="https://homarr.example.com (one origin per line)"></textarea>
+            <button class="btn btn-outline-primary btn-sm" id="saveEmbedOriginsBtn" type="button"><i class="fas fa-save me-1"></i>Save origins</button>
+            <div class="form-text">When empty, only this Snacks origin may embed the page. Paths and trailing slashes are normalized to the origin.</div>
+        </div>
+
+        <div class="encoder-panel rounded">
+            <h6 class="fw-bold mb-3"><i class="fas fa-shield-alt me-2 text-warning"></i>Notes</h6>
+            <ul class="small text-muted mb-0">
+                <li>When enabled, every browser request must present a valid session cookie.</li>
+                <li>Cluster traffic between master and nodes uses the shared secret configured in the Cluster tab — it is independent of this login.</li>
+                <li>Disabling auth rotates the session secret, invalidating all existing cookies.</li>
+                <li>API keys grant full API access — treat them like a password.</li>
+                <li>Iframe tokens are read-only, but may reveal queue filenames to an allowed embedding site.</li>
+            </ul>
+        </div>
+    </div>
+</div>

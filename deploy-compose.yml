@@ -1,0 +1,50 @@
+# Upstream-only example: original upstream image, not Snacks Archive.
+# This fork does not publish a Docker image; see README.md for supported releases.
+## Snacks - QNAP NAS Deployment
+## Copy this into Container Station > Applications > Create
+##
+## IMPORTANT: Update the video library path below to match your NAS.
+## Common QNAP paths:
+##   /share/CACHEDEV1_DATA/Multimedia/Movies
+##   /share/CACHEDEV1_DATA/Media
+##   /share/Public
+
+services:
+  snacks:
+    image: derekshreds/snacks-docker:latest
+    container_name: snacks
+    ## Host networking required for cluster UDP broadcast discovery to reach the LAN.
+    ## Bridge mode only forwards unicast traffic, so broadcasts never arrive.
+    network_mode: host
+    volumes:
+      ## CHANGE THIS to your actual media folder on the NAS
+      - /share/Public/Media:/app/work/uploads
+      ## Transcoding logs
+      - /share/CACHEDEV1_DATA/snacks/logs:/app/work/logs
+      ## Persist settings and database across container updates
+      - /share/CACHEDEV1_DATA/snacks/config:/app/work/config
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - SNACKS_WORK_DIR=/app/work
+      - FFMPEG_PATH=/usr/lib/jellyfin-ffmpeg/ffmpeg
+      - FFPROBE_PATH=/usr/lib/jellyfin-ffmpeg/ffprobe
+      ## VAAPI driver — auto-detection tries iHD then i965. Override here if needed:
+      #- LIBVA_DRIVER_NAME=iHD
+      ## API key for automation (pause/resume queue, trigger scans) when sign-in is enabled.
+      #- SNACKS_API_KEY=change-me
+      ## Pin settings from compose (lock shown in GUI) — see the HTML guide's
+      ## "Environment-variable overrides" section at /docs/index.html#data-backups.
+      #- SNACKS_SET_Codec=av1
+      #- SNACKS_SCAN_Enabled=true
+    devices:
+      ## Intel QSV hardware acceleration (TS-453E J6412)
+      - /dev/dri:/dev/dri
+    ## QNAP lacks standard video/render groups — privileged grants /dev/dri access
+    privileged: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6767/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

@@ -1,0 +1,140 @@
+using Microsoft.AspNetCore.Mvc;
+using Snacks.Models.Requests;
+using Snacks.Services;
+
+namespace Snacks.Controllers;
+
+/// <summary>
+///     JSON API for managing the control-panel auth config. The login-form
+///     endpoints live on <see cref="AuthController"/>.
+/// </summary>
+[Route("api/auth")]
+[ApiController]
+public sealed class AuthApiController : ControllerBase
+{
+    private readonly AuthService _auth;
+
+    public AuthApiController(AuthService auth)
+    {
+        ArgumentNullException.ThrowIfNull(auth);
+        _auth = auth;
+    }
+
+    /******************************************************************
+     *  Auth Config
+     ******************************************************************/
+
+    /// <summary> Returns the public auth configuration (enabled flag, username, password presence). </summary>
+    [HttpGet("config")]
+    public IActionResult Get() => new JsonResult(_auth.GetPublicConfig());
+
+    /// <summary>
+    ///     Saves updated auth configuration. Enabling auth requires a username and, if no
+    ///     password hash is already stored, a plain-text password to hash.
+    /// </summary>
+    /// <param name="req"> The new auth configuration to apply. </param>
+    [HttpPost("config")]
+    public IActionResult Save([FromBody] SaveAuthRequest req)
+    {
+        try
+        {
+            ArgumentNullException.ThrowIfNull(req);
+            if (req.Enabled && string.IsNullOrWhiteSpace(req.Username))
+                return new JsonResult(new { success = false, error = "Username required to enable auth" });
+
+            var existing = _auth.GetConfig();
+            if (req.Enabled && string.IsNullOrEmpty(existing.PasswordHash) && string.IsNullOrEmpty(req.Password))
+                return new JsonResult(new { success = false, error = "Password required to enable auth" });
+
+            _auth.UpdateConfig(req.Enabled, req.Username, req.Password);
+
+            // Force a fresh login whenever the config changes: drop whatever session
+            // cookie the caller had so they have to re-authenticate under the new
+            // settings. Disabling already rotates the server-side secret; clearing the
+            // cookie as well keeps the client and server in sync.
+            Response.Cookies.Delete(AuthService.CookieName);
+
+            return new JsonResult(new { success = true, authRequired = _auth.IsAuthRequired() });
+        }
+        catch (Exception ex)
+        {
+            return new JsonResult(new { success = false, error = ex.Message });
+        }
+    }
+
+    /******************************************************************
+     *  API Key
+     ******************************************************************/
+
+    /// <summary>
+    ///     Returns the stored API key for the Security panel's reveal button.
+    ///     A key set via the SNACKS_API_KEY env var is never exposed here.
+    /// </summary>
+    [HttpGet("apikey")]
+    public IActionResult GetApiKey() => new JsonResult(new { apiKey = _auth.GetStoredApiKey() });
+
+    /// <summary> Generates and persists a new stored API key, replacing any previous one. </summary>
+    [HttpPost("apikey/generate")]
+    public IActionResult GenerateApiKey() => new JsonResult(new { success = true, apiKey = _auth.GenerateApiKey() });
+
+    /// <summary> Removes the stored API key. A key set via SNACKS_API_KEY stays valid. </summary>
+    [HttpDelete("apikey")]
+    public IActionResult DeleteApiKey()
+    {
+        _auth.ClearApiKey();
+        return new JsonResult(new { success = true });
+    }
+
+    /******************************************************************
+     *  Scoped iframe access
+     ******************************************************************/
+
+    /// <summary>Returns the stored iframe token and the configured CSP origin allowlist.</summary>
+    [HttpGet("embed")]
+    public IActionResult GetEmbedConfig() => new JsonResult(new
+    {
+        embedToken = _auth.GetStoredEmbedToken(),
+        iframeAllowedOrigins = _auth.GetConfig().IframeAllowedOrigins?.ToArray() ?? [],
+    });
+
+    /// <summary>Generates and persists a new iframe-only token.</summary>
+    [HttpPost("embed/generate")]
+    public IActionResult GenerateEmbedToken() => new JsonResult(new
+    {
+        success = true,
+        embedToken = _auth.GenerateEmbedToken(),
+    });
+
+    /// <summary>Revokes the stored iframe-only token.</summary>
+    [HttpDelete("embed")]
+    public IActionResult DeleteEmbedToken()
+    {
+        _auth.ClearEmbedToken();
+        return new JsonResult(new { success = true });
+    }
+
+    /// <summary>Replaces the concrete HTTP(S) origins allowed to frame iframe pages.</summary>
+    [HttpPost("embed/origins")]
+    public IActionResult SaveEmbedOrigins([FromBody] SaveEmbedOriginsRequest request)
+    {
+        try
+        {
+            _auth.UpdateIframeAllowedOrigins(request.Origins);
+            return new JsonResult(new
+            {
+                success = true,
+                iframeAllowedOrigins = _auth.GetConfig().IframeAllowedOrigins.ToArray(),
+            });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { success = false, error = ex.Message });
+        }
+    }
+}
+
+/// <summary>Origin allowlist update for server-rendered iframe pages.</summary>
+public sealed class SaveEmbedOriginsRequest
+{
+    public List<string> Origins { get; init; } = [];
+}

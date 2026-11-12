@@ -1,0 +1,363 @@
+using Microsoft.EntityFrameworkCore;
+using Snacks.Models;
+
+namespace Snacks.Data;
+
+/// <summary>
+///     Writer for the append-only native encode-history ledger and read-only
+///     dashboard aggregation over native history plus completed archive entries.
+///     Provides the writer hook used by both the master's local scheduler
+///     and the cluster completion path, plus the aggregation queries that
+///     power the analytics dashboard.
+///
+///     <para>All aggregations and row limits stay in SQLite instead of loading
+///     the full history or archive media metadata into application memory.</para>
+/// </summary>
+public partial class EncodeHistoryRepository
+{
+    private readonly IDbContextFactory<SnacksDbContext> _contextFactory;
+
+    /// <summary> Creates a new repository using the specified context factory. </summary>
+    public EncodeHistoryRepository(IDbContextFactory<SnacksDbContext> contextFactory)
+    {
+        _contextFactory = contextFactory;
+    }
+
+    /// <summary>
+    ///     Persists a single completed encode. Negative
+    ///     <see cref="EncodeHistory.BytesSaved"/> values are clamped to zero
+    ///     so a bigger output (rare; happens with stricter quality settings)
+    ///     doesn't pull the dashboard's running totals into the negatives.
+    /// </summary>
+    public async Task RecordAsync(EncodeHistory record)
+    {
+        if (record.BytesSaved < 0) record.BytesSaved = 0;
+        if (string.IsNullOrEmpty(record.DeviceId)) record.DeviceId = "unknown";
+        if (string.IsNullOrEmpty(record.Outcome))  record.Outcome = "Completed";
+
+        using var context = await _contextFactory.CreateDbContextAsync();
+        context.EncodeHistory.Add(record);
+        try
+        {
+            await context.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            // History recording is non-critical — never let an analytics
+            // write failure abort the encode pipeline. Log and move on.
+            Log.Warning($"EncodeHistory: failed to record {record.JobId}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    ///     Rows carrying an Advanced Video profile label, slimmed to the columns
+    ///     the measured-results aggregation needs. Projection keeps a long ledger
+    ///     cheap to scan; EF cannot project to the entity type, so the anonymous
+    ///     shape is rehydrated into POCOs for the pure aggregator.
+    /// </summary>
+    public async Task<List<EncodeHistory>> GetAdvancedLabeledAsync()
+    {
+        using var context = await _contextFactory.CreateDbContextAsync();
+        var slim = await context.EncodeHistory
+            .Where(row => row.AdvancedProfileName != null)
+            .Select(row => new
+            {
+                row.AdvancedProfileId, row.AdvancedProfileName, row.AdvancedRuleName,
+                row.OriginalSizeBytes, row.EncodedSizeBytes, row.BytesSaved,
+                row.DurationSeconds, row.CompletedAt,
+            })
+            .ToListAsync();
+        return slim.Select(row => new EncodeHistory
+        {
+            AdvancedProfileId   = row.AdvancedProfileId,
+            AdvancedProfileName = row.AdvancedProfileName,
+            AdvancedRuleName    = row.AdvancedRuleName,
+            OriginalSizeBytes   = row.OriginalSizeBytes,
+            EncodedSizeBytes    = row.EncodedSizeBytes,
+            BytesSaved          = row.BytesSaved,
+            DurationSeconds     = row.DurationSeconds,
+            CompletedAt         = row.CompletedAt,
+        }).ToList();
+    }
+
+    /// <summary>
+    ///     Top-line stats for the dashboard hero strip: lifetime totals
+    ///     across every completed encode in the ledger. Optional
+    ///     <paramref name="kind"/> scopes the totals to video-only or
+    ///     music-only when the dashboard's media-type filter is active.
+    /// </summary>
+    public async Task<HistorySummary> GetSummaryAsync(MediaKind? kind = null)
+    {
+        using var context = await _contextFactory.CreateDbContextAsync();
+        var query = AnalyticsQuery(context);
+        if (kind.HasValue) query = query.Where(e => e.Kind == kind.Value);
+
+        var stats = await query
+            .GroupBy(_ => 1)
+            .Select(g => new HistorySummary
+            {
+                TotalEncodes      = g.Count(),
+                TotalBytesSaved   = g.Sum(e => e.BytesSaved),
+                TotalOriginalBytes = g.Sum(e => e.OriginalSizeBytes),
+                TotalEncodeSeconds = g.Sum(e => e.EncodeSeconds),
+                TotalContentSeconds = g.Sum(e => e.DurationSeconds),
+                TimedContentSeconds = g.Sum(e => e.EncodeSeconds > 0 && e.DurationSeconds > 0 ? e.DurationSeconds : 0),
+                SpeedSampleEncodeSeconds = g.Sum(e => e.EncodeSeconds > 0 && e.DurationSeconds > 0 ? e.EncodeSeconds : 0),
+                FourKEncodes      = g.Count(e => e.Is4K),
+                NoSavingsEncodes  = g.Count(e => e.Outcome == "NoSavings"),
+                VideoEncodes      = g.Count(e => e.Kind == MediaKind.Video),
+                MusicEncodes      = g.Count(e => e.Kind == MediaKind.Music),
+                UnknownEncodeTimeEncodes = g.Count(e => e.EncodeSeconds <= 0),
+            })
+            .FirstOrDefaultAsync();
+
+        stats ??= new HistorySummary();
+        if (kind != MediaKind.Music)
+            stats.RecoveredEncodeTimeEncodes = await context.ArchiveEntries.CountAsync(a => a.Stage == "completed"
+                && context.ArchiveEncodeTimings.Any(t => t.EntryId == a.Id && t.Source == "x265-log")
+                && !context.ArchiveEncodeTimings.Any(t => t.EntryId == a.Id && !t.Finished));
+        return stats;
+    }
+
+    /// <summary>
+    ///     Daily aggregates for the savings-over-time chart.
+    ///     Returns one bucket per UTC day in the requested range, including
+    ///     empty days so the chart x-axis stays continuous.
+    /// </summary>
+    public async Task<List<DailyAggregate>> GetSavingsOverTimeAsync(int days, MediaKind? kind = null)
+    {
+        if (days <= 0) days = 30;
+        var cutoff = DateTime.UtcNow.Date.AddDays(-days + 1);
+
+        using var context = await _contextFactory.CreateDbContextAsync();
+        var query = AnalyticsQuery(context).Where(e => e.CompletedAt >= cutoff);
+        if (kind.HasValue) query = query.Where(e => e.Kind == kind.Value);
+
+        var rows = await query
+            .GroupBy(e => e.CompletedAt.Date)
+            .Select(g => new DailyAggregate
+            {
+                Day             = g.Key,
+                Encodes         = g.Count(),
+                BytesSaved      = g.Sum(e => e.BytesSaved),
+                OriginalBytes   = g.Sum(e => e.OriginalSizeBytes),
+                EncodeSeconds   = g.Sum(e => e.EncodeSeconds),
+            })
+            .ToListAsync();
+
+        // Backfill empty days so the chart renders a continuous x-axis.
+        var byDay = rows.ToDictionary(r => r.Day);
+        var filled = new List<DailyAggregate>(days);
+        for (int i = 0; i < days; i++)
+        {
+            var d = cutoff.AddDays(i);
+            filled.Add(byDay.TryGetValue(d, out var hit)
+                ? hit
+                : new DailyAggregate { Day = d });
+        }
+        return filled;
+    }
+
+    /// <summary>
+    ///     Per-device totals over the trailing window. Drives the device
+    ///     workload stripe — total encode hours, files done, and bytes
+    ///     saved per device family.
+    /// </summary>
+    public async Task<List<DeviceAggregate>> GetDeviceUtilizationAsync(int days, MediaKind? kind = null)
+    {
+        if (days <= 0) days = 30;
+        var cutoff = DateTime.UtcNow.Date.AddDays(-days + 1);
+
+        using var context = await _contextFactory.CreateDbContextAsync();
+        var query = AnalyticsQuery(context).Where(e => e.CompletedAt >= cutoff);
+        if (kind.HasValue) query = query.Where(e => e.Kind == kind.Value);
+
+        return await query
+            .GroupBy(e => e.DeviceId)
+            .Select(g => new DeviceAggregate
+            {
+                DeviceId       = g.Key,
+                Encodes        = g.Count(),
+                EncodeSeconds  = g.Sum(e => e.EncodeSeconds),
+                BytesSaved     = g.Sum(e => e.BytesSaved),
+                ContentSeconds = g.Sum(e => e.EncodeSeconds > 0 && e.DurationSeconds > 0 ? e.DurationSeconds : 0),
+                SpeedSampleEncodeSeconds = g.Sum(e => e.EncodeSeconds > 0 && e.DurationSeconds > 0 ? e.EncodeSeconds : 0),
+                UnknownEncodeTimeEncodes = g.Count(e => e.EncodeSeconds <= 0),
+            })
+            .OrderByDescending(d => d.EncodeSeconds)
+            .ToListAsync();
+    }
+
+    /// <summary>
+    ///     Output codec breakdown over the trailing window — feeds the
+    ///     dashboard donut chart.
+    /// </summary>
+    public async Task<List<CodecAggregate>> GetCodecMixAsync(int days, MediaKind? kind = null)
+    {
+        if (days <= 0) days = 30;
+        var cutoff = DateTime.UtcNow.Date.AddDays(-days + 1);
+
+        using var context = await _contextFactory.CreateDbContextAsync();
+        var query = AnalyticsQuery(context).Where(e => e.CompletedAt >= cutoff);
+        if (kind.HasValue) query = query.Where(e => e.Kind == kind.Value);
+
+        return await query
+            .GroupBy(e => e.EncodedCodec)
+            .Select(g => new CodecAggregate
+            {
+                Codec      = string.IsNullOrEmpty(g.Key) ? "unknown" : g.Key,
+                Encodes    = g.Count(),
+                BytesSaved = g.Sum(e => e.BytesSaved),
+            })
+            .OrderByDescending(c => c.Encodes)
+            .ToListAsync();
+    }
+
+    /// <summary>
+    ///     Per-node throughput over the trailing window. Drives the
+    ///     "where did the work get done" leaderboard.
+    /// </summary>
+    public async Task<List<NodeAggregate>> GetNodeThroughputAsync(int days, MediaKind? kind = null)
+    {
+        if (days <= 0) days = 30;
+        var cutoff = DateTime.UtcNow.Date.AddDays(-days + 1);
+
+        using var context = await _contextFactory.CreateDbContextAsync();
+        var query = AnalyticsQuery(context).Where(e => e.CompletedAt >= cutoff);
+        if (kind.HasValue) query = query.Where(e => e.Kind == kind.Value);
+
+        // Group by hostname, not NodeId. A machine's NodeId could change between runs
+        // (e.g. a config reset), which would split one physical node into several rows
+        // on the throughput chart — the same machine showing up as N "new" nodes. The
+        // hostname is the stable, human-meaningful identity for this view; NodeId is
+        // carried through only as a fallback label for rows with no hostname.
+        return await query
+            .GroupBy(e => e.NodeHostname)
+            .Select(g => new NodeAggregate
+            {
+                NodeId         = g.Min(e => e.NodeId) ?? "",
+                Hostname       = g.Key,
+                Encodes        = g.Count(),
+                BytesSaved     = g.Sum(e => e.BytesSaved),
+                EncodeSeconds  = g.Sum(e => e.EncodeSeconds),
+                UnknownEncodeTimeEncodes = g.Count(e => e.EncodeSeconds <= 0),
+            })
+            .OrderByDescending(n => n.Encodes)
+            .ToListAsync();
+    }
+
+    /// <summary>
+    ///     Most recent N encodes for the dashboard's recent-activity table.
+    /// </summary>
+    public async Task<List<EncodeHistory>> GetRecentAsync(int limit, MediaKind? kind = null)
+    {
+        if (limit <= 0) limit = 25;
+        if (limit > 200) limit = 200;
+
+        using var context = await _contextFactory.CreateDbContextAsync();
+        var query = AnalyticsQuery(context);
+        if (kind.HasValue) query = query.Where(e => e.Kind == kind.Value);
+
+        return DisplayNames(await query
+            .OrderByDescending(e => e.CompletedAt)
+            .ThenBy(e => e.JobId)
+            .Take(limit)
+            .ToListAsync());
+    }
+
+    /// <summary>
+    ///     Wipes every row in the encode-history ledger. Returns the number of
+    ///     rows deleted so callers can surface a confirmation toast. The ledger
+    ///     is append-only by design — this is the one escape hatch, used to
+    ///     clear native history. Archive and restore records remain intact.
+    /// </summary>
+    public async Task<int> ClearAllAsync()
+    {
+        using var context = await _contextFactory.CreateDbContextAsync();
+        return await context.EncodeHistory.ExecuteDeleteAsync();
+    }
+
+    /// <summary>
+    ///     Top compression wins — encodes ordered by the largest absolute
+    ///     bytes saved. Surfaces the most "look how much we shrunk this"
+    ///     stories for the leaderboard.
+    /// </summary>
+    public async Task<List<EncodeHistory>> GetTopSavingsAsync(int limit, int days, MediaKind? kind = null)
+    {
+        if (limit <= 0) limit = 10;
+        if (limit > 100) limit = 100;
+        if (days <= 0) days = 365;
+        var cutoff = DateTime.UtcNow.Date.AddDays(-days + 1);
+
+        using var context = await _contextFactory.CreateDbContextAsync();
+        var query = AnalyticsQuery(context).Where(e => e.CompletedAt >= cutoff && e.Outcome == "Completed");
+        if (kind.HasValue) query = query.Where(e => e.Kind == kind.Value);
+
+        return DisplayNames(await query
+            .OrderByDescending(e => e.BytesSaved)
+            .ThenBy(e => e.JobId)
+            .Take(limit)
+            .ToListAsync());
+    }
+}
+
+/// <summary>Lifetime total stats for the dashboard hero strip.</summary>
+public sealed class HistorySummary
+{
+    public int RecoveredEncodeTimeEncodes { get; set; }
+    public int UnknownEncodeTimeEncodes { get; set; }
+    public int    TotalEncodes        { get; set; }
+    public long   TotalBytesSaved     { get; set; }
+    public long   TotalOriginalBytes  { get; set; }
+    public double TotalEncodeSeconds  { get; set; }
+    public double TotalContentSeconds { get; set; }
+    public double TimedContentSeconds { get; set; }
+    public double SpeedSampleEncodeSeconds { get; set; }
+    public int    FourKEncodes        { get; set; }
+    public int    NoSavingsEncodes    { get; set; }
+    /// <summary>Encode count attributed to <see cref="MediaKind.Video"/> rows. Used by the dashboard hero subtitle to surface a "video / music" split.</summary>
+    public int    VideoEncodes        { get; set; }
+    /// <summary>Encode count attributed to <see cref="MediaKind.Music"/> rows.</summary>
+    public int    MusicEncodes        { get; set; }
+}
+
+/// <summary>Per-day rollup for the savings time-series chart.</summary>
+public sealed class DailyAggregate
+{
+    public DateTime Day           { get; set; }
+    public int      Encodes       { get; set; }
+    public long     BytesSaved    { get; set; }
+    public long     OriginalBytes { get; set; }
+    public double   EncodeSeconds { get; set; }
+}
+
+/// <summary>Per-device rollup for the device utilization stripe.</summary>
+public sealed class DeviceAggregate
+{
+    public double SpeedSampleEncodeSeconds { get; set; }
+    public int UnknownEncodeTimeEncodes { get; set; }
+    public string DeviceId       { get; set; } = "";
+    public int    Encodes        { get; set; }
+    public double EncodeSeconds  { get; set; }
+    public long   BytesSaved     { get; set; }
+    public double ContentSeconds { get; set; }
+}
+
+/// <summary>Per-codec rollup for the dashboard donut.</summary>
+public sealed class CodecAggregate
+{
+    public string Codec      { get; set; } = "";
+    public int    Encodes    { get; set; }
+    public long   BytesSaved { get; set; }
+}
+
+/// <summary>Per-node rollup for the throughput leaderboard.</summary>
+public sealed class NodeAggregate
+{
+    public int UnknownEncodeTimeEncodes { get; set; }
+    public string NodeId        { get; set; } = "";
+    public string Hostname      { get; set; } = "";
+    public int    Encodes       { get; set; }
+    public long   BytesSaved    { get; set; }
+    public double EncodeSeconds { get; set; }
+}

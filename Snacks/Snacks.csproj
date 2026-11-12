@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- Single source of truth for release tooling and runtime version output.
+         Run `node scripts/sync-version.mjs` after changing it. -->
+    <Version>2.20.4</Version>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
+    <!-- Pin beyond the vulnerable 2.0.0 transitive floor from ASP.NET OpenAPI. -->
+    <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.4" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; buildtransitive; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="TesseractOCR" Version="5.5.2" />
+    <PackageReference Include="SkiaSharp" Version="4.150.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.150.1" />
+    <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Bundled Tesseract language data. Any file placed under tools/tessdata ships
+         next to the DLL at runtime and is picked up by TessdataResolver before any
+         on-demand download. Apache 2.0 licensed (tessdata_fast upstream). -->
+    <None Include="tools\tessdata\*.traineddata" CopyToOutputDirectory="PreserveNewest" Link="tessdata\%(Filename)%(Extension)" />
+
+    <!-- OCR post-pass word lists. Each *.txt named by Tesseract lang code activates
+         the spellcheck corrector for that language — see SubtitleSpellChecker. -->
+    <None Include="tools\wordlists\*.txt" CopyToOutputDirectory="PreserveNewest" Link="wordlists\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

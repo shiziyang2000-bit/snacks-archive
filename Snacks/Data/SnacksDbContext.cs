@@ -1,0 +1,141 @@
+using Microsoft.EntityFrameworkCore;
+using Snacks.Models;
+
+namespace Snacks.Data;
+
+/// <summary>
+///     Entity Framework Core database context for the Snacks application.
+///     Manages the SQLite connection and schema for media file tracking
+///     and distributed job state transitions.
+///
+///     Uses SQLite with WAL mode for crash resilience and concurrent reads.
+/// </summary>
+public class SnacksDbContext : DbContext
+{
+    /// <summary>
+    ///     Persistent media file records — the authoritative source of truth
+    ///     for file scan results, encoding status, and remote job assignments.
+    /// </summary>
+    public DbSet<MediaFile> MediaFiles => Set<MediaFile>();
+    public DbSet<ArchiveJob> ArchiveJobs => Set<ArchiveJob>();
+    public DbSet<ArchiveEntry> ArchiveEntries => Set<ArchiveEntry>();
+    public DbSet<ArchiveCacheRecord> ArchiveCaches => Set<ArchiveCacheRecord>();
+    public DbSet<ArchiveEncodeTiming> ArchiveEncodeTimings => Set<ArchiveEncodeTiming>();
+
+    /// <summary>
+    ///     Write-ahead log for distributed job state transitions.
+    ///     Records state changes BEFORE they occur, enabling recovery
+    ///     of interrupted multi-step operations after crashes.
+    /// </summary>
+    public DbSet<StateTransition> StateTransitions => Set<StateTransition>();
+
+    /// <summary>
+    ///     Append-only ledger of completed encodes. Powers the analytics
+    ///     dashboard (savings totals, per-device utilization, codec mix,
+    ///     recent-encodes table). Independent from <see cref="MediaFiles"/>;
+    ///     a row is written every time a job finishes successfully, even if
+    ///     the same file is re-encoded later.
+    /// </summary>
+    public DbSet<EncodeHistory> EncodeHistory => Set<EncodeHistory>();
+
+    /// <summary> Creates a new context with the specified database options. </summary>
+    public SnacksDbContext(DbContextOptions<SnacksDbContext> options) : base(options) { }
+
+    /// <summary> Configures the entity schema, indexes, and constraints. </summary>
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<ArchiveJob>(e => { e.HasKey(x => x.Id); e.HasIndex(x => x.RequestId).IsUnique(); });
+        modelBuilder.Entity<ArchiveEntry>(e => { e.HasKey(x => x.Id); e.HasIndex(x => x.JobId); e.HasIndex(x => new { x.FolderJobId, x.Stage }); e.HasIndex(x => new { x.JobId, x.DiscoveryKey }).IsUnique(); e.HasIndex(x => x.SourceHash); e.HasIndex(x => x.OutputHash); e.HasIndex(x => x.Stage); e.HasIndex(x => new { x.Path, x.CreatedAt }); e.HasIndex(x => x.OutputPath); e.HasIndex(x => x.BackupPath); });
+        modelBuilder.Entity<ArchiveCacheRecord>(e => { e.HasKey(x => x.Id); e.HasIndex(x => x.EntryId); e.HasIndex(x => x.Path).IsUnique(); });
+        modelBuilder.Entity<ArchiveEncodeTiming>(e => { e.HasKey(x => x.Id); e.HasIndex(x => x.EntryId); });
+        modelBuilder.Entity<MediaFile>().HasIndex(x => x.ArchiveEntryId);
+        /******************************************************************
+         *  MediaFile Configuration
+         ******************************************************************/
+
+        modelBuilder.Entity<MediaFile>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasIndex(e => e.FilePath).IsUnique();
+            entity.HasIndex(e => e.Status);
+
+            // Composite index covers directory-scoped base-name lookups used for format-change detection.
+            entity.HasIndex(e => new { e.Directory, e.BaseName });
+
+            // The pending queue IS "Queued rows ordered by Priority desc, Bitrate desc".
+            // This index makes the scheduler's window query and the queue UI's paging
+            // O(log n) at 500k rows instead of sorting the whole status bucket per call.
+            entity.HasIndex(e => new { e.Status, e.Priority, e.Bitrate })
+                  .IsDescending(false, true, true);
+
+            // Rolling health verifier walks oldest-verified-first.
+            entity.HasIndex(e => e.LastVerifiedAt);
+
+            entity.Property(e => e.FilePath).IsRequired().HasMaxLength(1024);
+            entity.Property(e => e.Directory).IsRequired().HasMaxLength(1024);
+            entity.Property(e => e.FileName).IsRequired().HasMaxLength(512);
+            entity.Property(e => e.BaseName).IsRequired().HasMaxLength(512);
+            entity.Property(e => e.Codec).HasMaxLength(32);
+            entity.Property(e => e.PixelFormat).HasMaxLength(32);
+            entity.Property(e => e.FailureReason).HasMaxLength(2048);
+
+            entity.Property(e => e.RemoteWorkItemId).HasMaxLength(64);
+            entity.Property(e => e.AssignedNodeId).HasMaxLength(64);
+            entity.Property(e => e.AssignedNodeName).HasMaxLength(128);
+            entity.Property(e => e.RemoteJobPhase).HasMaxLength(32);
+            entity.Property(e => e.AssignedNodeIp).HasMaxLength(64);
+
+            // Bounded to prevent pathological track counts from bloating rows. Typical
+            // payload is ~30 B/audio track and ~20 B/subtitle track; 4 KB holds ~100 tracks.
+            entity.Property(e => e.AudioStreams).HasMaxLength(4096);
+            entity.Property(e => e.SubtitleStreams).HasMaxLength(4096);
+
+            entity.Property(e => e.LastVerifyResult).HasMaxLength(2048);
+        });
+
+
+        /******************************************************************
+         *  StateTransition Configuration
+         ******************************************************************/
+
+        modelBuilder.Entity<StateTransition>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.Property(e => e.WorkItemId).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.FromPhase).HasMaxLength(32);
+            entity.Property(e => e.ToPhase).IsRequired().HasMaxLength(32);
+
+            // Composite index covers the recovery query that filters by work item and completion flag.
+            entity.HasIndex(e => new { e.WorkItemId, e.Completed });
+        });
+
+
+        /******************************************************************
+         *  EncodeHistory Configuration
+         ******************************************************************/
+
+        modelBuilder.Entity<EncodeHistory>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.Property(e => e.JobId).IsRequired().HasMaxLength(64);
+            entity.Property(e => e.FilePath).IsRequired().HasMaxLength(1024);
+            entity.Property(e => e.FileName).IsRequired().HasMaxLength(512);
+            entity.Property(e => e.OriginalCodec).HasMaxLength(32);
+            entity.Property(e => e.EncodedCodec).HasMaxLength(32);
+            entity.Property(e => e.DeviceId).HasMaxLength(32);
+            entity.Property(e => e.NodeId).HasMaxLength(64);
+            entity.Property(e => e.NodeHostname).HasMaxLength(128);
+            entity.Property(e => e.Outcome).HasMaxLength(16);
+
+            // Time-series queries (savings-over-time, recent encodes) all key off
+            // CompletedAt; index it so the dashboard's date-range scans don't
+            // table-scan the whole ledger.
+            entity.HasIndex(e => e.CompletedAt);
+            // Per-device aggregations group on (DeviceId, CompletedAt).
+            entity.HasIndex(e => new { e.DeviceId, e.CompletedAt });
+        });
+    }
+}

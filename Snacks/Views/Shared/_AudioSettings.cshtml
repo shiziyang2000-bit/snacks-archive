@@ -1,0 +1,105 @@
+@{
+    string formPrefix = ViewData["FormPrefix"]?.ToString() ?? "";
+}
+
+<div class="row g-4">
+    <div class="col-md-6">
+        <div class="encoder-panel rounded">
+            <h6 class="fw-bold mb-3"><i class="fas fa-volume-high me-2 text-primary"></i>Languages</h6>
+
+            <div class="mb-3">
+                <label class="form-label"><i class="fas fa-language me-1"></i> Audio Languages to Keep</label>
+                <div class="chip-input" id="@(formPrefix)AudioLanguagesToKeepChips" data-field="AudioLanguagesToKeep" data-source="iso-languages" data-reorderable="true">
+                    <div class="chip-list"></div>
+                    <input type="text" class="chip-new" placeholder="Type a language (e.g. en, eng, English)">
+                </div>
+                <div class="form-text">Empty list keeps all audio tracks. Codes are stored as 2-letter ISO (e.g. <code>en</code>). Drag chips to reorder &mdash; the top language plays first. Add <code>und</code> (Undetermined) to also keep tracks with a missing or unknown language tag.</div>
+            </div>
+
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="@(formPrefix)KeepOriginalLanguage" name="KeepOriginalLanguage">
+                <label class="form-check-label" for="@(formPrefix)KeepOriginalLanguage">Auto-keep original performed language</label>
+                <div class="form-text ms-4">Requires Sonarr/Radarr/TVDB credentials in the Connections tab.</div>
+            </div>
+
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="@(formPrefix)AutoSetDefaultTrack" name="AutoSetDefaultTrack">
+                <label class="form-check-label" for="@(formPrefix)AutoSetDefaultTrack">Auto-set first kept audio/subtitle as default track</label>
+                <div class="form-text ms-4">After reordering, flags the top-priority audio and subtitle output as the default track so players auto-select it on playback.</div>
+            </div>
+
+            <div class="mb-3">
+                <label for="@(formPrefix)OriginalLanguageProvider" class="form-label">Original-Language Lookup Provider</label>
+                <select class="form-select" id="@(formPrefix)OriginalLanguageProvider" name="OriginalLanguageProvider">
+                    <option value="None">None</option>
+                    <option value="Auto">Auto (pick best available)</option>
+                    <option value="Sonarr">Sonarr (TV)</option>
+                    <option value="Radarr">Radarr (Movies)</option>
+                    <option value="TVDB">TVDB (TV)</option>
+                    <option value="TMDb">TMDb</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="encoder-panel rounded">
+            <h6 class="fw-bold mb-3"><i class="fas fa-sliders-h me-2 text-info"></i>Codec &amp; Mix</h6>
+
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="@(formPrefix)PreserveOriginalAudio" name="PreserveOriginalAudio" checked>
+                <label class="form-check-label" for="@(formPrefix)PreserveOriginalAudio"><i class="fas fa-clone me-1"></i> Preserve original audio tracks</label>
+                <div class="form-text">Pass every kept source track through with <code>-c:a copy</code> alongside any added outputs below.</div>
+            </div>
+
+            <div class="mb-2">
+                <label class="form-label mb-1"><i class="fas fa-plus-circle me-1"></i> Output formats to add</label>
+                <div class="form-text mb-2">For each kept language, the planner emits one stream per row, picking the best matching source track and downmixing higher channel layouts when needed. Rows that already exist in the source as-is are deduped to a copy automatically.</div>
+                <div id="@(formPrefix)AudioOutputs" class="audio-outputs"></div>
+                <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="@(formPrefix)AudioOutputsAdd">
+                    <i class="fas fa-plus"></i> Add output
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<template id="@(formPrefix)AudioOutputRowTemplate">
+    <div class="audio-output-row d-flex align-items-end gap-2 mb-2" data-audio-output-row>
+        <div class="flex-fill">
+            <label class="form-label form-label-sm mb-1">Codec</label>
+            <select class="form-select form-select-sm" data-field="Codec">
+                <option value="aac">AAC</option>
+                <option value="ac3">AC3</option>
+                <option value="eac3">E-AC3</option>
+                <option value="opus">Opus</option>
+            </select>
+        </div>
+        <div class="flex-fill">
+            <label class="form-label form-label-sm mb-1">Layout</label>
+            <select class="form-select form-select-sm" data-field="Layout">
+                <option value="Source">Source (keep)</option>
+                <option value="Mono">Mono (1.0)</option>
+                <option value="Stereo">Stereo (2.0)</option>
+                <option value="5.1">5.1 surround</option>
+                <option value="7.1">7.1 surround</option>
+            </select>
+        </div>
+        <div class="flex-fill">
+            <label class="form-label form-label-sm mb-1">Sample Rate</label>
+            <select class="form-select form-select-sm" data-field="SampleRateHz">
+                <option value="0" selected>Source</option>
+                <option value="44100">44.1 kHz</option>
+                <option value="48000">48 kHz</option>
+                <option value="96000">96 kHz</option>
+            </select>
+        </div>
+        <div style="width: 7rem;">
+            <label class="form-label form-label-sm mb-1">Bitrate (kbps)</label>
+            <input type="number" class="form-control form-control-sm" data-field="BitrateKbps" min="0" max="1536" step="16" value="192">
+        </div>
+        <button type="button" class="btn btn-sm btn-outline-danger" data-audio-output-remove title="Remove output">
+            <i class="fas fa-trash"></i>
+        </button>
+    </div>
+</template>
